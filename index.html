@@ -321,6 +321,17 @@
               </button>
               <button
                 type="button"
+                onclick="shareCertificate()"
+                title="Share certificate (WhatsApp, LinkedIn, Drive)"
+                class="px-3 py-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 hover:text-white border border-white/15 text-xs font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                </svg>
+                <span class="hidden sm:inline">Share</span>
+              </button>
+              <button
+                type="button"
                 onclick="addToLinkedIn()"
                 title="Add credential to LinkedIn"
                 class="px-3 py-2.5 rounded-lg bg-[#0A66C2] hover:bg-[#0958A8] text-white text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
@@ -338,6 +349,17 @@
             <div class="w-full max-w-3xl rounded-md overflow-hidden certificate-frame bg-white">
               <canvas id="participantCanvas" class="w-full h-auto block"></canvas>
             </div>
+          </div>
+
+          <!-- Discreet Name Correction Footer -->
+          <div class="bg-white border-t border-ivory-200 px-5 sm:px-7 py-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500">
+            <span>2&times; Print-Sharp Resolution (2244&times;1584 px)</span>
+            <span>
+              Spot a spelling error in your name?
+              <a id="reportCorrectionLink" href="mailto:srujanmirji10@gmail.com" class="font-semibold text-navy-700 hover:text-navy-900 underline underline-offset-2 ml-1">
+                Request a correction
+              </a>
+            </span>
           </div>
         </div>
       </div>
@@ -801,21 +823,27 @@
       activeTemplateImage.src = src;
     }
 
-    // Core Canvas Renderer
+    // Core Canvas Renderer (2x print-sharp for student export, 1x for fast organizer preview)
     function drawCertificateOnCanvas(canvasId, participant) {
       const canvas = document.getElementById(canvasId);
-      renderCertificateToCanvasElement(canvas, participant);
+      const scale = canvasId === "participantCanvas" ? 2 : 1;
+      renderCertificateToCanvasElement(canvas, participant, scale);
     }
 
-    function renderCertificateToCanvasElement(canvas, participant) {
+    function renderCertificateToCanvasElement(canvas, participant, scale = 1) {
       if (!canvas || !activeTemplateImage.complete || activeTemplateImage.naturalWidth === 0) return;
 
       const ctx = canvas.getContext("2d");
       const w = activeTemplateImage.naturalWidth;
       const h = activeTemplateImage.naturalHeight;
 
-      canvas.width = w;
-      canvas.height = h;
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+
+      ctx.save();
+      ctx.scale(scale, scale);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
 
       // 1. Draw Certificate Background Template
       ctx.drawImage(activeTemplateImage, 0, 0, w, h);
@@ -908,6 +936,8 @@
           // Non-fatal if QR library failed to load offline
         }
       }
+
+      ctx.restore();
     }
 
     // =========================================================================
@@ -952,8 +982,17 @@
       errorBox.classList.add("hidden");
       currentFoundParticipant = match;
 
-      document.getElementById("foundName").textContent = getParticipantName(match);
-      document.getElementById("foundUSNBadge").textContent = getParticipantUSN(match);
+      const foundNameStr = getParticipantName(match);
+      const foundUSNStr = getParticipantUSN(match);
+      document.getElementById("foundName").textContent = foundNameStr;
+      document.getElementById("foundUSNBadge").textContent = foundUSNStr;
+
+      const mailSubject = encodeURIComponent(`Certificate Name Correction Request - ${foundUSNStr}`);
+      const mailBody = encodeURIComponent(
+        `Hello Coordinator,\n\nI would like to request a spelling correction on my Poster Presentation Competition certificate.\n\nUSN: ${foundUSNStr}\nCurrent Name on Certificate: ${foundNameStr}\nCorrect Name: \n\nThank you.`
+      );
+      document.getElementById("reportCorrectionLink").href = `mailto:srujanmirji10@gmail.com?subject=${mailSubject}&body=${mailBody}`;
+
       resultCard.classList.remove("hidden");
 
       drawCertificateOnCanvas("participantCanvas", match);
@@ -1000,6 +1039,44 @@
       }).catch(() => {
         showToast("Unable to copy link automatically.", "error");
       });
+    }
+
+    async function shareCertificate() {
+      if (!currentFoundParticipant) return;
+      const name = getParticipantName(currentFoundParticipant);
+      const usn = getParticipantUSN(currentFoundParticipant);
+      const verifyUrl = getVerificationUrl(usn);
+      const shareText = `My Poster Presentation Competition Participation Certificate — JCET Hubballi (${name})`;
+
+      try {
+        const canvas = document.getElementById("participantCanvas");
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png", 1.0));
+        const safeName = name.replace(/[^a-z0-9]/gi, "_");
+        const file = blob ? new File([blob], `${safeName}_${usn}_Certificate.png`, { type: "image/png" }) : null;
+
+        if (navigator.share && file && navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            title: "Participation Certificate — JCET Hubballi",
+            text: shareText,
+            files: [file]
+          });
+          return;
+        }
+        if (navigator.share) {
+          await navigator.share({
+            title: "Participation Certificate — JCET Hubballi",
+            text: shareText,
+            url: verifyUrl
+          });
+          return;
+        }
+        // Desktop fallback: copy verification link
+        copyVerificationLink();
+      } catch (err) {
+        if (err && err.name !== "AbortError") {
+          copyVerificationLink();
+        }
+      }
     }
 
     function addToLinkedIn() {
